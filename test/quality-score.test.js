@@ -1,7 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { scoreQuality } = require('../src/quality-score.js');
+const {
+  QUALITY_SCORING_CONFIG,
+  createEditableQualityScoringConfig,
+  scoreQuality,
+} = require('../src/quality-score.js');
 
 function financialYears(years, overrides = {}) {
   return years.map((fiscalYear) => ({
@@ -17,71 +21,105 @@ function financialYears(years, overrides = {}) {
   }));
 }
 
-test('scores a complete five-year history and exposes its checks and assumptions', () => {
+test('scores a strong complete five-year history at the maximum and explains every check', () => {
   const result = scoreQuality({
     companyId: 'fixture-co',
     companyName: 'Fixture Co',
     financialYears: financialYears([2020, 2021, 2022, 2023, 2024]),
   }, 5);
 
-  assert.deepEqual(result, {
-    companyId: 'fixture-co',
-    companyName: 'Fixture Co',
-    lookbackYears: 5,
-    status: 'scored',
-    qualityScore: 100,
-    assumptions: {
-      checks: [
-        { id: 'profitability', metric: 'average return on capital', threshold: '>= 15%', weight: 25 },
-        { id: 'manageable-debt', metric: 'median debt-to-equity', threshold: '<= 0.5; ratios must be non-negative', weight: 25 },
-        { id: 'earnings-consistency', metric: 'positive net income in selected years', threshold: '>= 80%', weight: 25 },
-        { id: 'cash-generation', metric: 'positive free cash flow years (operating cash flow minus capital expenditure)', threshold: '>= 80%', weight: 25 },
-      ],
-      capitalExpenditureConvention: 'positive cash outflow; free cash flow = operating cash flow - capital expenditure',
-    },
-    checks: [
-      { id: 'profitability', label: 'Profitability', figure: { averageReturnOnCapitalPercent: 18 }, threshold: '>= 15%', passed: true, weight: 25, pointsAwarded: 25 },
-      { id: 'manageable-debt', label: 'Manageable debt', figure: { medianDebtToEquity: 0.25 }, threshold: '<= 0.5; ratios must be non-negative', passed: true, weight: 25, pointsAwarded: 25 },
-      { id: 'earnings-consistency', label: 'Earnings consistency', figure: { positiveYears: 5, totalYears: 5, positivePercent: 100 }, threshold: '>= 80%', passed: true, weight: 25, pointsAwarded: 25 },
-      { id: 'cash-generation', label: 'Cash generation', figure: { positiveFreeCashFlowYears: 5, totalYears: 5, positivePercent: 100 }, threshold: '>= 80%', passed: true, weight: 25, pointsAwarded: 25 },
-    ],
-    missingData: [],
-  });
+  assert.equal(result.status, 'scored');
+  assert.equal(result.qualityScore, 100);
+  assert.equal(result.checks.length, 4);
+  assert.equal(result.checks.every((check) => check.pointsAwarded === check.weight), true);
+  assert.equal(result.checks.every((check) => check.passed === true), true);
+  assert.equal(result.checks.every((check) => check.explanation.endsWith('.')), true);
+  assert.deepEqual(result.assumptions.configuration, QUALITY_SCORING_CONFIG);
 });
 
-test('scores a complete ten-year history using exactly the selected ten fiscal years', () => {
+test('awards linear partial points between each metric floor and target', () => {
+  const years = financialYears(Array.from({ length: 10 }, (_, index) => 2015 + index));
+  for (const year of years) {
+    year.returnOnCapitalPercent = 7.5;
+    year.debtToEquity = 1.125;
+    year.netIncome = 100;
+    year.operatingCashFlow = 15;
+    year.capitalExpenditure = 10;
+  }
+  for (const year of years.slice(0, 3)) {
+    year.netIncome = -1;
+    year.operatingCashFlow = 5;
+  }
+
+  const result = scoreQuality({ companyId: 'midpoint-co', financialYears: years }, 10);
+
+  assert.equal(result.status, 'scored');
+  assert.deepEqual(result.checks.map(({ scorePercent, pointsAwarded, passed }) => [scorePercent, pointsAwarded, passed]), [
+    [50, 12.5, false],
+    [50, 12.5, false],
+    [75, 18.75, false],
+    [75, 18.75, false],
+  ]);
+  assert.equal(result.qualityScore, 62.5);
+  assert.deepEqual(result.checks[2].figure, { positiveYears: 7, totalYears: 10, positivePercent: 70 });
+});
+
+test('scores annual profitability separately before averaging its graded points', () => {
+  const years = financialYears([2020, 2021, 2022, 2023, 2024], {
+    2020: { returnOnCapitalPercent: -5 },
+    2021: { returnOnCapitalPercent: 5 },
+    2022: { returnOnCapitalPercent: 10 },
+    2023: { returnOnCapitalPercent: 20 },
+    2024: { returnOnCapitalPercent: 25 },
+  });
+
+  const result = scoreQuality({ companyId: 'variable-roic-co', financialYears: years }, 5);
+
+  assert.deepEqual(result.checks[0].figure.annualReturnOnCapitalPercent, [-5, 5, 10, 20, 25]);
+  assert.equal(result.checks[0].scorePercent, 60);
+  assert.equal(result.checks[0].pointsAwarded, 15);
+});
+
+test('accepts an edited config and returns the exact config used as score assumptions', () => {
+  const config = createEditableQualityScoringConfig();
+  config.checks[0].target = 36;
+  config.checks[0].weight = 40;
+  config.checks[1].weight = 20;
+  config.checks[2].weight = 20;
+  config.checks[3].weight = 20;
+
+  const result = scoreQuality({
+    companyId: 'custom-co',
+    financialYears: financialYears([2020, 2021, 2022, 2023, 2024]),
+  }, 5, config);
+
+  assert.equal(result.qualityScore, 80);
+  assert.deepEqual(result.assumptions.configuration, config);
+  assert.equal(result.checks[0].pointsAwarded, 20);
+});
+
+test('rejects invalid editable configs instead of calculating a misleading score', () => {
+  const config = createEditableQualityScoringConfig();
+  config.checks[0].weight = 10;
+
+  assert.throws(
+    () => scoreQuality({ companyId: 'fixture-co', financialYears: financialYears([2020, 2021, 2022, 2023, 2024]) }, 5, config),
+    /weights must sum to 100/,
+  );
+});
+
+test('scores exactly the latest selected ten fiscal years', () => {
   const years = financialYears(Array.from({ length: 11 }, (_, index) => 2014 + index));
-  years[0].returnOnCapitalPercent = 1;
+  years[0].returnOnCapitalPercent = -100;
 
   const result = scoreQuality({ companyId: 'ten-year-co', financialYears: years }, 10);
 
   assert.equal(result.status, 'scored');
-  assert.equal(result.qualityScore, 100);
-  assert.equal(result.checks[0].figure.averageReturnOnCapitalPercent, 18);
-  assert.equal(result.checks[2].figure.totalYears, 10);
-  assert.equal(result.assumptions.checks.every((check) => check.weight === 25), true);
+  assert.equal(result.checks[0].figure.annualReturnOnCapitalPercent.includes(-100), false);
+  assert.equal(result.checks[0].figure.annualReturnOnCapitalPercent.length, 10);
 });
 
-test('reports observed failures as zero points while retaining the measured figures', () => {
-  const years = financialYears([2020, 2021, 2022, 2023, 2024], {
-    2020: { returnOnCapitalPercent: 5, debtToEquity: 1.2, netIncome: -3, operatingCashFlow: 10, capitalExpenditure: 20 },
-    2021: { returnOnCapitalPercent: 8, debtToEquity: 1.1, netIncome: 50, operatingCashFlow: 10, capitalExpenditure: 20 },
-    2022: { returnOnCapitalPercent: 9, debtToEquity: 1.3, netIncome: 50, operatingCashFlow: 10, capitalExpenditure: 20 },
-    2023: { returnOnCapitalPercent: 10, debtToEquity: 1.1, netIncome: 50, operatingCashFlow: 10, capitalExpenditure: 20 },
-  });
-
-  const result = scoreQuality({ companyId: 'weak-co', financialYears: years }, 5);
-
-  assert.equal(result.status, 'scored');
-  assert.equal(result.qualityScore, 25);
-  assert.deepEqual(result.checks.map(({ passed, pointsAwarded }) => [passed, pointsAwarded]), [
-    [false, 0], [false, 0], [true, 25], [false, 0],
-  ]);
-  assert.equal(result.checks[2].figure.positiveYears, 4);
-  assert.equal(result.checks[3].figure.positiveFreeCashFlowYears, 1);
-});
-
-test('returns insufficient data without a score or failed checks when an annual input is missing', () => {
+test('returns insufficient data with null points rather than failing checks when an annual input is missing', () => {
   const years = financialYears([2020, 2021, 2022, 2023, 2024]);
   delete years[2].operatingCashFlow;
 
@@ -90,7 +128,7 @@ test('returns insufficient data without a score or failed checks when an annual 
   assert.equal(result.status, 'insufficient-data');
   assert.equal(result.qualityScore, null);
   assert.deepEqual(result.missingData, [{ fiscalYear: 2022, field: 'operatingCashFlow' }]);
-  assert.equal(result.checks.every(({ passed, pointsAwarded }) => passed === null && pointsAwarded === null), true);
+  assert.equal(result.checks.every(({ passed, pointsAwarded, scorePercent }) => passed === null && pointsAwarded === null && scorePercent === null), true);
 });
 
 test('returns insufficient data when the selected annual history has a gap', () => {
@@ -102,7 +140,6 @@ test('returns insufficient data when the selected annual history has a gap', () 
   assert.equal(result.status, 'insufficient-data');
   assert.equal(result.qualityScore, null);
   assert.equal(result.missingData.some(({ field }) => field === 'fiscalYear'), true);
-  assert.equal(result.checks.every(({ passed }) => passed === null), true);
 });
 
 test('requires source and reporting date for every selected fiscal year', () => {
@@ -123,7 +160,7 @@ test('rejects lookbacks other than five or ten years', () => {
   assert.throws(() => scoreQuality({ companyId: 'fixture-co', financialYears: [] }, 7), /5 or 10/);
 });
 
-test('rejects negative capital expenditure because normalized capex is a positive cash outflow', () => {
+test('requires capital expenditure as a positive cash outflow', () => {
   const years = financialYears([2020, 2021, 2022, 2023, 2024]);
   years[4].capitalExpenditure = -30;
 
