@@ -1,0 +1,7 @@
+{
+  "name": "munger-screener",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}
