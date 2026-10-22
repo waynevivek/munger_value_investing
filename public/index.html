@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Munger Screener — local NSE pilot</title>
+  <meta name="description" content="A local, manual-data value-investing screener. Scores are a research aid, not investment advice.">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div>
+      <p class="eyebrow">India value-investing screener · local pilot</p>
+      <h1>Munger Screener</h1>
+    </div>
+    <p class="header-badge">Research aid<br><span>Not investment advice</span></p>
+  </header>
+
+  <main id="main">
+    <noscript>
+      <p class="notice notice-warning">This screener needs JavaScript. It runs entirely on your machine with a local Node server.</p>
+    </noscript>
+
+    <section id="dataset-banner" class="dataset-banner" aria-live="polite">
+      <p class="muted">Loading the pilot dataset…</p>
+    </section>
+
+    <section class="panel" aria-labelledby="screener-heading">
+      <div class="panel-heading">
+        <div>
+          <h2 id="screener-heading">Covered companies</h2>
+          <p class="muted">Quality comes from filed annual financials. Valuation needs a dated manual price.</p>
+        </div>
+        <label class="field-inline" for="lookback">
+          Financial history
+          <select id="lookback">
+            <option value="5">5 years</option>
+            <option value="10">10 years</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="table-scroll">
+        <table class="screener-table">
+          <caption class="visually-hidden">Covered companies with available fiscal coverage and quality score</caption>
+          <thead>
+            <tr>
+              <th scope="col">Company</th>
+              <th scope="col">Fiscal coverage</th>
+              <th scope="col">Quality</th>
+              <th scope="col">Analysis</th>
+            </tr>
+          </thead>
+          <tbody id="screener-body">
+            <tr><td colspan="4" class="muted">Loading companies…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div id="screener-message" aria-live="polite"></div>
+      <p class="footnote">A ten-year lookback is selectable, but this pilot only holds five TCS fiscal years. Incomplete history is reported as “insufficient data”, never as a low score.</p>
+    </section>
+
+    <section id="company-panel" class="panel company-panel" aria-label="Company analysis">
+      <p class="muted">Loading company analysis…</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p><strong>This is a research aid, not investment advice, a valuation guarantee, or a buy/sell recommendation.</strong> It is not an official Buffett or Munger formula. Do your own research.</p>
+    <p>Pilot dataset: five TCS annual filings, manually transcribed from NSE financial-results PDFs and annual reports. No automated NSE collection, live price feed, or quarterly data. NSE-derived data is local-only; redistribution rights are not verified. Price entries stay in this browser and are sent only to the local scoring server.</p>
+  </footer>
+
+  <script type="module" src="/app.mjs"></script>
+</body>
+</html>

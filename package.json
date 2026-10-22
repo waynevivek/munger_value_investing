@@ -2,6 +2,7 @@
   "name": "munger-screener",
   "private": true,
   "scripts": {
+    "start": "node src/server.js",
     "test": "node --test"
   }
 }
