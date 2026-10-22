@@ -33,13 +33,19 @@
           <h2 id="screener-heading">Covered companies</h2>
           <p class="muted">Quality comes from filed annual financials. Valuation needs a dated manual price.</p>
         </div>
-        <label class="field-inline" for="lookback">
-          Financial history
-          <select id="lookback">
-            <option value="5">5 years</option>
-            <option value="10">10 years</option>
-          </select>
-        </label>
+        <div class="panel-controls">
+          <label class="field-inline" for="watchlist-filter">
+            <input id="watchlist-filter" type="checkbox">
+            Watchlist only
+          </label>
+          <label class="field-inline" for="lookback">
+            Financial history
+            <select id="lookback">
+              <option value="5">5 years</option>
+              <option value="10">10 years</option>
+            </select>
+          </label>
+        </div>
       </div>
 
       <div id="preset-panel"></div>
@@ -61,6 +67,20 @@
 
     <section id="company-panel" class="panel company-panel" aria-label="Company analysis">
       <p class="muted">Loading company analysis…</p>
+    </section>
+
+    <section class="panel backup-panel" aria-labelledby="backup-heading">
+      <h2 id="backup-heading">Back up local research</h2>
+      <p class="muted">Export your watchlist and qualitative reviews as JSON. Financial data, manual prices, and screen settings are not included.</p>
+      <div class="backup-actions">
+        <button class="button button-secondary" type="button" id="export-research">Export JSON</button>
+        <label class="field backup-import" for="import-research">
+          <span>Import a backup</span>
+          <input id="import-research" type="file" accept="application/json,.json">
+        </label>
+      </div>
+      <p class="form-help">Import replaces — it does not merge with — the watchlist and reviews saved in this browser. Invalid files are rejected before anything changes.</p>
+      <p id="backup-status" class="backup-status" role="status" aria-live="polite"></p>
     </section>
   </main>
 

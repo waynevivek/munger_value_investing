@@ -26,6 +26,9 @@ npm test
 - **Company view:** quality 100/100, valuation 0/100 at a premium price, combined 50/100, and the full breakdown behind each number.
 - **Intrinsic range:** LOW/BASE/HIGH values calculated live by `src/financial-fit.js`, with the growth, terminal-growth, discount-rate, and maintenance-capex assumptions for each case.
 - **Market price:** entered manually with an as-of date and source. It is always labelled manual/not live, and stale after 7 days. No price is fetched or stored by the server.
+- **Watchlist:** companies can be added from the company view, shown with a star in the screener, and filtered to watchlisted names only. Membership is stored in this browser.
+- **Qualitative review:** separate prompts and notes for moat, management and capital allocation, and circle of competence, with a per-section reviewed checkbox. Saved in this browser and never used by the financial score.
+- **JSON backup:** export the watchlist and qualitative reviews as a versioned JSON file. Import validates the file first and then replaces the local research; invalid files are rejected without changing what is already saved.
 - **Provenance:** every financial input displays its source, reporting date, and mapping method. Statement amounts are ₹ crore; per-share values are ₹.
 - **Honest gaps:** missing price, missing fiscal years, invalid manual input, network failures, and insufficient data each have explicit states. Missing data never becomes a low score.
 
@@ -61,6 +64,7 @@ With the documented pilot reference price of ₹3,500 entered manually, the app 
 | `src/pilot-data.js` | Loads and describes the pilot dataset |
 | `src/screen-service.js` | Validates lookback/manual price/preset, calls the scorer, adds coverage and warnings |
 | `src/server.js` | Zero-dependency HTTP API and static file server |
+| `public/research.mjs` | Validated browser-local watchlist and qualitative-review storage |
 | `public/` | Screener and company-view client (vanilla ES modules) |
 | `test/` | Scoring, adapter, service, HTTP, render, and DOM-level UI integration tests |
 
@@ -78,7 +82,9 @@ Price fields are optional together. Supply all three to calculate valuation; any
 
 ## Limitations
 
-- One company, five annual filings. No quarterly context, watchlist, notes, or JSON backup yet.
+- One company, five annual filings. No quarterly context yet.
+- Watchlists and qualitative reviews live only in this browser's local storage. Clearing site data removes them, and there is no account sync; use the JSON backup to move them.
+- Import replaces local research rather than merging it. Manual prices, the screen preset, and the financial dataset are not part of the backup.
 - Screener sorting covers company, fiscal coverage, and quality. Valuation and combined scores need a per-company manual price and are shown in the company view.
 - Preset edits are stored in this browser only; they are not part of the financial dataset or a shared team setting.
 - Scores are not calibrated to Indian market conditions; the 50/50 blend can let a cheap, weak company and an expensive, strong company both land mid-range.

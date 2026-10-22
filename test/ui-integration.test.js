@@ -11,6 +11,8 @@ function elementStub() {
     innerHTML: '',
     textContent: '',
     value: '',
+    checked: false,
+    files: [],
     listeners: {},
     addEventListener(type, handler) {
       this.listeners[type] = handler;
@@ -27,7 +29,7 @@ async function waitFor(predicate, message, timeoutMs = 3000) {
   throw new Error(`Timed out waiting for: ${message}`);
 }
 
-test('renders TCS, accepts a manual price, and clears it back to a no-price state', async () => {
+test('renders TCS with manual prices, presets, watchlist, reviews, and JSON backup', async () => {
   const companies = loadPilotDataset();
   const server = createServer({
     companies,
@@ -39,12 +41,16 @@ test('renders TCS, accepts a manual price, and clears it back to a no-price stat
   const elements = new Map([
     ['#dataset-banner', elementStub()],
     ['#lookback', elementStub()],
+    ['#watchlist-filter', elementStub()],
     ['#screener-head', elementStub()],
     ['#screener-body', elementStub()],
     ['#screener-message', elementStub()],
     ['#preset-panel', elementStub()],
     ['#preset-message', elementStub()],
     ['#company-panel', elementStub()],
+    ['#export-research', elementStub()],
+    ['#import-research', elementStub()],
+    ['#backup-status', elementStub()],
   ]);
   const storage = new Map([
     ['munger-screener:manual-price:TCS', JSON.stringify({
@@ -55,6 +61,8 @@ test('renders TCS, accepts a manual price, and clears it back to a no-price stat
   ]);
 
   let documentClickHandler = null;
+  let exportedClicks = 0;
+  let capturedBlob = null;
   const documentStub = {
     title: '',
     querySelector: (selector) => elements.get(selector) ?? null,
@@ -67,6 +75,8 @@ test('renders TCS, accepts a manual price, and clears it back to a no-price stat
       setAttribute() {},
       textContent: '',
       before() {},
+      click() { exportedClicks += 1; },
+      remove() {},
     }),
   };
 
@@ -98,6 +108,23 @@ test('renders TCS, accepts a manual price, and clears it back to a no-price stat
     marginOfSafetyTargetPercent: '50',
   };
 
+  const reviewFormValues = {
+    'reviewed:moat': 'on',
+    'notes:moat': 'Pricing power from switching costs.',
+    'reviewed:management': null,
+    'notes:management': '',
+    'reviewed:circle': 'on',
+    'notes:circle': 'Understands IT services.',
+  };
+
+  const realCreateObjectURL = URL.createObjectURL;
+  const realRevokeObjectURL = URL.revokeObjectURL;
+  URL.createObjectURL = (blob) => {
+    capturedBlob = blob;
+    return 'blob:ui-test';
+  };
+  URL.revokeObjectURL = () => {};
+
   global.fetch = (input, init) => realFetch(new URL(input, base), init);
   global.FormData = class {
     constructor(form) {
@@ -106,6 +133,7 @@ test('renders TCS, accepts a manual price, and clears it back to a no-price stat
 
     get(name) {
       if (this.form?.id === 'preset-form') return presetFormValues[name] ?? null;
+      if (this.form?.id === 'review-form') return reviewFormValues[name] ?? null;
       return { price: '3500', asOfDate: '2026-10-22', source: 'ui test quote' }[name] ?? null;
     }
   };
@@ -221,7 +249,122 @@ test('renders TCS, accepts a manual price, and clears it back to a no-price stat
     );
     assert.match(screenerBody.innerHTML, /100\/100/);
     assert.match(presetPanel.innerHTML, /default preset/);
+
+    await waitFor(() => panel.innerHTML.includes('Your qualitative review'), 'the review form');
+    assert.match(panel.innerHTML, /id="watchlist-toggle" data-company="TCS">/);
+    assert.doesNotMatch(panel.innerHTML, /aria-label="On your watchlist"/);
+
+    const watchlistFilter = elements.get('#watchlist-filter');
+    assert.equal(typeof panel.listeners.change, 'function');
+    panel.listeners.change({
+      target: { id: 'watchlist-toggle', checked: true, dataset: { company: 'TCS' } },
+    });
+
+    await waitFor(
+      () => screenerBody.innerHTML.includes('aria-label="On your watchlist"'),
+      'the watchlist indicator in the screener',
+    );
+    assert.deepEqual(
+      JSON.parse(storage.get('munger-screener:research:v1')).watchlist,
+      ['TCS'],
+    );
+
+    watchlistFilter.checked = true;
+    watchlistFilter.listeners.change();
+    assert.match(screenerBody.innerHTML, /Tata Consultancy Services Limited/);
+    assert.match(elements.get('#screener-message').innerHTML, /watchlisted companies only/i);
+
+    const reviewSubmit = panel.listeners.submit;
+    await reviewSubmit({ target: { id: 'review-form' }, preventDefault() {} });
+
+    await waitFor(
+      () => panel.innerHTML.includes('Review saved in this browser.'),
+      'the saved review status',
+    );
+    assert.match(panel.innerHTML, /Pricing power from switching costs\./);
+    assert.match(panel.innerHTML, /Understands IT services\./);
+    assert.match(panel.innerHTML, /100<small>\/100<\/small>/);
+    assert.match(panel.innerHTML, /never used by the financial score or valuation/);
+
+    const savedResearch = JSON.parse(storage.get('munger-screener:research:v1'));
+    assert.equal(savedResearch.reviews.TCS.sections.moat.reviewed, true);
+    assert.equal(savedResearch.reviews.TCS.sections.moat.notes, 'Pricing power from switching costs.');
+    assert.equal(savedResearch.reviews.TCS.sections.management.reviewed, false);
+    assert.equal(savedResearch.reviews.TCS.sections.management.notes, '');
+    assert.match(screenerBody.innerHTML, /review saved/);
+
+    elements.get('#export-research').listeners.click();
+    assert.equal(exportedClicks, 1);
+    const exported = JSON.parse(await capturedBlob.text());
+    assert.equal(exported.format, 'munger-screener-research');
+    assert.equal(exported.version, 1);
+    assert.deepEqual(exported.watchlist, ['TCS']);
+    assert.equal(exported.reviews.TCS.sections.moat.notes, 'Pricing power from switching costs.');
+    assert.match(elements.get('#backup-status').textContent, /Backup downloaded/);
+
+    panel.listeners.change({
+      target: { id: 'watchlist-toggle', checked: false, dataset: { company: 'TCS' } },
+    });
+    await waitFor(
+      () => screenerBody.innerHTML.includes('No watchlisted companies'),
+      'the empty watchlist filter state',
+    );
+    assert.deepEqual(
+      JSON.parse(storage.get('munger-screener:research:v1')).watchlist,
+      [],
+    );
+
+    watchlistFilter.checked = false;
+    watchlistFilter.listeners.change();
+    assert.match(screenerBody.innerHTML, /Tata Consultancy Services Limited/);
+    assert.match(screenerBody.innerHTML, /review saved/);
+    assert.doesNotMatch(screenerBody.innerHTML, /aria-label="On your watchlist"/);
+
+    const importInput = elements.get('#import-research');
+    const backupStatus = elements.get('#backup-status');
+    importInput.files = [{ text: async () => '{' }];
+    await importInput.listeners.change();
+
+    assert.match(backupStatus.textContent, /not valid JSON/);
+    assert.match(backupStatus.textContent, /left unchanged/);
+    assert.equal(
+      JSON.parse(storage.get('munger-screener:research:v1')).reviews.TCS.sections.moat.notes,
+      'Pricing power from switching costs.',
+    );
+
+    const importedBackup = {
+      format: 'munger-screener-research',
+      version: 1,
+      exportedAt: '2026-10-22T12:00:00.000Z',
+      watchlist: ['TCS'],
+      reviews: {
+        TCS: {
+          sections: {
+            moat: { reviewed: true, notes: 'Imported note' },
+            management: { reviewed: false, notes: '' },
+            circle: { reviewed: true, notes: 'Imported circle' },
+          },
+          updatedAt: '2026-10-22T12:00:00.000Z',
+        },
+      },
+    };
+    importInput.files = [{ text: async () => JSON.stringify(importedBackup) }];
+    await importInput.listeners.change();
+
+    await waitFor(
+      () => panel.innerHTML.includes('Imported note'),
+      'the imported review notes',
+    );
+    assert.match(backupStatus.textContent, /Previous local research was replaced/);
+    assert.deepEqual(
+      JSON.parse(storage.get('munger-screener:research:v1')).watchlist,
+      ['TCS'],
+    );
+    assert.doesNotMatch(panel.innerHTML, /Pricing power from switching costs\./);
+    assert.match(screenerBody.innerHTML, /aria-label="On your watchlist"/);
   } finally {
+    URL.createObjectURL = realCreateObjectURL;
+    URL.revokeObjectURL = realRevokeObjectURL;
     global.fetch = realFetch;
     global.FormData = realFormData;
     delete global.window;

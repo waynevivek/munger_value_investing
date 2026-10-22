@@ -14,11 +14,23 @@ import {
   FIELD_META,
 } from './render.mjs';
 import { presetFromGetter, presetValues, validatePreset } from './preset.mjs';
+import {
+  REVIEW_SECTIONS,
+  hasReview,
+  loadResearch,
+  parseResearchBackup,
+  saveResearch,
+  saveReview,
+  serializeResearch,
+  setWatchlisted,
+} from './research.mjs';
 import { DEFAULT_SORT, ariaSort, nextSort, sortCompanies } from './sort.mjs';
 
 const LOOKBACK_STORAGE_KEY = 'munger-screener:lookback';
 const PRESET_STORAGE_KEY = 'munger-screener:preset:v1';
 const savedPriceKey = (companyId) => `munger-screener:manual-price:${companyId}`;
+
+const savedResearch = loadResearch(localStorage);
 
 const state = {
   lookbackYears: readSavedLookback(),
@@ -28,6 +40,10 @@ const state = {
   config: null,
   preset: readSavedPreset(),
   presetMessage: null,
+  research: savedResearch.research,
+  researchError: savedResearch.error,
+  watchlistOnly: false,
+  reviewStatus: null,
   sort: { ...DEFAULT_SORT },
   detail: null,
   loading: true,
@@ -39,12 +55,16 @@ const state = {
 const elements = {
   banner: document.querySelector('#dataset-banner'),
   lookback: document.querySelector('#lookback'),
+  watchlistFilter: document.querySelector('#watchlist-filter'),
   screenerHead: document.querySelector('#screener-head'),
   screenerBody: document.querySelector('#screener-body'),
   screenerMessage: document.querySelector('#screener-message'),
   presetPanel: document.querySelector('#preset-panel'),
   presetMessage: document.querySelector('#preset-message'),
   panel: document.querySelector('#company-panel'),
+  exportResearch: document.querySelector('#export-research'),
+  importResearch: document.querySelector('#import-research'),
+  backupStatus: document.querySelector('#backup-status'),
 };
 
 function readSavedLookback() {
@@ -312,15 +332,31 @@ function renderScreener() {
     return;
   }
 
-  elements.screenerBody.innerHTML = sortCompanies(state.companies, state.sort).map((company) => {
+  const visible = state.watchlistOnly
+    ? state.companies.filter((company) => state.research.watchlist.includes(company.companyId))
+    : state.companies;
+
+  if (visible.length === 0) {
+    elements.screenerBody.innerHTML = '<tr><td colspan="4" class="muted">No watchlisted companies.</td></tr>';
+    elements.screenerMessage.innerHTML = `
+      <div class="empty-state">
+        <h3>No companies in your watchlist</h3>
+        <p>Open a company and tick “Watchlist” to save it here, or clear the watchlist-only filter.</p>
+      </div>`;
+    return;
+  }
+
+  elements.screenerBody.innerHTML = sortCompanies(visible, state.sort).map((company) => {
+    const watched = state.research.watchlist.includes(company.companyId);
+    const reviewed = hasReview(state.research.reviews[company.companyId]);
     const quality = Number.isFinite(company.qualityScore)
       ? `<span class="score-text tone-${scoreTone(company.qualityScore)}">${formatScore(company.qualityScore)}/100</span>`
       : '<span class="score-pill">Insufficient data</span>';
     return `
       <tr>
         <td>
-          <a class="company-link" href="?company=${encodeURIComponent(company.companyId)}">${escapeHtml(company.companyName)}</a>
-          <span class="company-meta">${escapeHtml(company.companyId)} · ${escapeHtml(company.currency)}</span>
+          ${watched ? '<span class="watch-star" role="img" aria-label="On your watchlist">★</span> ' : ''}<a class="company-link" href="?company=${encodeURIComponent(company.companyId)}">${escapeHtml(company.companyName)}</a>
+          <span class="company-meta">${escapeHtml(company.companyId)} · ${escapeHtml(company.currency)}${reviewed ? ' · review saved' : ''}</span>
         </td>
         <td>
           ${formatYearRange(company.coverage.fiscalYears)}
@@ -335,11 +371,14 @@ function renderScreener() {
   }).join('');
 
   const messages = [];
-  const incomplete = state.companies.filter((company) => !company.coverage.complete);
+  const incomplete = visible.filter((company) => !company.coverage.complete);
   if (incomplete.length > 0) {
     messages.push(`<p class="notice notice-warning">The ${state.lookbackYears}-year lookback is incomplete for `
       + `${incomplete.map((company) => escapeHtml(company.companyId)).join(', ')}. The analysis reports the missing `
       + 'fiscal years and withholds a score instead of treating missing data as poor performance.</p>');
+  }
+  if (state.watchlistOnly) {
+    messages.unshift('<p class="notice">Showing watchlisted companies only. Qualitative reviews never affect the financial score.</p>');
   }
   if (state.preset) {
     messages.unshift('<p class="notice notice-success">A custom preset is applied to quality thresholds and weights. '
@@ -573,6 +612,51 @@ function renderProvenance(detail) {
   }).join('');
 }
 
+function renderReview(company) {
+  const review = state.research.reviews[company.companyId];
+  const updated = review?.updatedAt
+    ? `Last saved ${new Date(review.updatedAt).toLocaleString('en-IN')}`
+    : 'Not saved yet';
+  const cards = REVIEW_SECTIONS.map((section) => {
+    const entry = review?.sections?.[section.id] ?? { reviewed: false, notes: '' };
+    return `
+      <article class="review-card">
+        <div class="review-head">
+          <h4>${escapeHtml(section.label)}</h4>
+          <label class="review-check">
+            <input type="checkbox" name="reviewed:${section.id}"${entry.reviewed ? ' checked' : ''}>
+            <span>Reviewed</span>
+          </label>
+        </div>
+        <p class="review-prompt">${escapeHtml(section.prompt)}</p>
+        <label class="field" for="notes-${section.id}">
+          <span>Your notes</span>
+          <textarea id="notes-${section.id}" name="notes:${section.id}" rows="4" maxlength="4000"
+            placeholder="What you concluded, and what you still need to check">${escapeHtml(entry.notes)}</textarea>
+        </label>
+      </article>`;
+  }).join('');
+
+  const status = state.reviewStatus
+    ? `<p class="review-status" role="status">${escapeHtml(state.reviewStatus)}</p>`
+    : '';
+  const error = state.researchError
+    ? `<p class="notice notice-warning">${escapeHtml(state.researchError)}</p>`
+    : '';
+
+  return `
+    ${error}
+    <p class="subsection-intro">Record your own judgement on the three qualitative questions. ${escapeHtml(updated)}.</p>
+    <form id="review-form" class="review-form">
+      <div class="review-grid">${cards}</div>
+      <div class="form-actions">
+        <button class="button" type="submit">Save review</button>
+      </div>
+      <p class="form-help">Stored only in this browser. Investor notes and checklist responses are never used by the financial score or valuation.</p>
+      ${status}
+    </form>`;
+}
+
 function renderCompany() {
   if (state.detailLoading && !state.detail) {
     elements.panel.innerHTML = '<p class="loading-state">Loading company analysis…</p>';
@@ -610,6 +694,7 @@ function renderCompany() {
     ? { price: detail.price.pricePerShare, asOfDate: detail.price.asOfDate, source: detail.price.source }
     : { price: '', asOfDate: '', source: '' });
   const config = screen.assumptions.configuration;
+  const watched = state.research.watchlist.includes(company.companyId);
 
   const qualityNote = Number.isFinite(screen.qualityScore)
     ? `${screen.qualityChecks.filter((check) => check.passed).length} of ${screen.qualityChecks.length} checks pass`
@@ -628,7 +713,13 @@ function renderCompany() {
         <h2>${escapeHtml(company.companyName)}</h2>
         <p class="muted">${formatYearRange(company.fiscalYears)} · ${detail.coverage.annualFilings} annual filings · manually transcribed</p>
       </div>
-      <span class="score-pill tone-${status.tone}">${escapeHtml(status.label)}</span>
+      <div class="company-actions">
+        <label class="watchlist-toggle">
+          <input type="checkbox" id="watchlist-toggle" data-company="${escapeHtml(company.companyId)}"${watched ? ' checked' : ''}>
+          <span>Watchlist</span>
+        </label>
+        <span class="score-pill tone-${status.tone}">${escapeHtml(status.label)}</span>
+      </div>
     </div>
 
     <div class="score-grid">
@@ -698,6 +789,11 @@ function renderCompany() {
     <section class="subsection" aria-labelledby="assumptions-heading">
       <h3 id="assumptions-heading">Assumptions</h3>
       ${renderAssumptions(screen)}
+    </section>
+
+    <section class="subsection" aria-labelledby="review-heading">
+      <h3 id="review-heading">Your qualitative review</h3>
+      ${renderReview(company)}
     </section>
 
     <section class="subsection" aria-labelledby="limits-heading">
@@ -799,6 +895,7 @@ async function loadDetail({ preserve = false } = {}) {
   if (!preserve) {
     state.detail = null;
     state.detailError = null;
+    state.reviewStatus = null;
   }
   state.detailLoading = true;
   renderCompany();
@@ -851,6 +948,94 @@ function showFormError(message) {
     paragraph.textContent = message;
     help.before(paragraph);
   }
+}
+
+function handleWatchlistChange(input) {
+  const companyId = input.dataset.company;
+  if (!companyId) return;
+  state.research = setWatchlisted(state.research, companyId, input.checked);
+  if (saveResearch(localStorage, state.research)) {
+    state.researchError = null;
+  } else {
+    state.researchError = 'This browser refused local storage, so the watchlist change will not survive a reload.';
+  }
+  renderScreener();
+}
+
+function showBackupStatus(message, isError = false) {
+  elements.backupStatus.textContent = message;
+  elements.backupStatus.className = isError ? 'backup-status form-error' : 'backup-status review-status';
+}
+
+function handleExportResearch() {
+  const json = serializeResearch(state.research);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `munger-screener-research-${todayIso()}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+  showBackupStatus('Backup downloaded. It contains your watchlist and qualitative reviews only.');
+}
+
+async function handleImportResearch() {
+  const file = elements.importResearch.files?.[0];
+  if (!file) return;
+
+  let text;
+  try {
+    text = await file.text();
+  } catch {
+    showBackupStatus('The selected file could not be read.', true);
+    elements.importResearch.value = '';
+    return;
+  }
+
+  const { research, error } = parseResearchBackup(text);
+  if (error) {
+    showBackupStatus(`${error} Your saved research was left unchanged.`, true);
+    elements.importResearch.value = '';
+    return;
+  }
+
+  const previous = state.research;
+  state.research = research;
+  if (!saveResearch(localStorage, research)) {
+    state.research = previous;
+    showBackupStatus('This browser refused local storage, so the import was not applied.', true);
+    elements.importResearch.value = '';
+    return;
+  }
+
+  state.researchError = null;
+  state.reviewStatus = null;
+  elements.importResearch.value = '';
+  renderScreener();
+  renderCompany();
+
+  const watched = research.watchlist.length;
+  const reviewed = Object.keys(research.reviews).length;
+  showBackupStatus(
+    `Imported ${watched} watchlisted compan${watched === 1 ? 'y' : 'ies'} and reviews for ${reviewed} compan${reviewed === 1 ? 'y' : 'ies'}. Previous local research was replaced.`,
+  );
+}
+
+function handleReviewSubmit(form) {
+  if (!state.companyId) return;
+
+  const data = new FormData(form);
+  const sections = Object.fromEntries(REVIEW_SECTIONS.map((section) => [section.id, {
+    reviewed: data.get(`reviewed:${section.id}`) !== null,
+    notes: String(data.get(`notes:${section.id}`) ?? ''),
+  }]));
+
+  state.research = saveReview(state.research, state.companyId, sections);
+  state.reviewStatus = saveResearch(localStorage, state.research)
+    ? 'Review saved in this browser.'
+    : 'Review updated for this view, but this browser refused to save it.';
+  renderCompany();
+  renderScreener();
 }
 
 function showPresetMessage(message) {
@@ -922,10 +1107,29 @@ elements.lookback.addEventListener('change', async () => {
   await loadApp();
 });
 
+elements.watchlistFilter.addEventListener('change', () => {
+  state.watchlistOnly = elements.watchlistFilter.checked;
+  renderScreener();
+});
+
+elements.exportResearch.addEventListener('click', handleExportResearch);
+elements.importResearch.addEventListener('change', handleImportResearch);
+
 elements.panel.addEventListener('submit', async (event) => {
-  if (event.target.id !== 'price-form') return;
-  event.preventDefault();
-  await handlePriceSubmit(event.target);
+  if (event.target.id === 'price-form') {
+    event.preventDefault();
+    await handlePriceSubmit(event.target);
+    return;
+  }
+  if (event.target.id === 'review-form') {
+    event.preventDefault();
+    handleReviewSubmit(event.target);
+  }
+});
+
+elements.panel.addEventListener('change', (event) => {
+  if (event.target.id !== 'watchlist-toggle') return;
+  handleWatchlistChange(event.target);
 });
 
 elements.presetPanel.addEventListener('submit', async (event) => {
