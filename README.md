@@ -21,7 +21,7 @@ npm test
 
 ## What the demo shows
 
-- **Screener:** covered companies, available fiscal years, and quality score for a 5- or 10-year selection. Columns sort by company, fiscal coverage, or quality. The 10-year option correctly reports missing FY2017–FY2021 rather than scoring five years as ten.
+- **Screener:** covered companies with combined, quality, and valuation scores for a 5- or 10-year selection, plus fiscal coverage. Saved manual prices fill the valuation and combined columns; rows without a usable price say “Price needed” instead of zero. Columns sort by any displayed score, company, or coverage, and combined score is the default order. The 10-year option correctly reports missing FY2017–FY2021 rather than scoring five years as ten.
 - **Editable preset:** the quality thresholds and check weights can be edited and reset. Changes are scored by the production engine and saved in the browser. The 50/50 combined weights and valuation scenarios are not editable, so the product decision stays fixed.
 - **Company view:** quality 100/100, valuation 0/100 at a premium price, combined 50/100, and the full breakdown behind each number.
 - **Intrinsic range:** LOW/BASE/HIGH values calculated live by `src/financial-fit.js`, with the growth, terminal-growth, discount-rate, and maintenance-capex assumptions for each case.
@@ -72,20 +72,22 @@ With the documented pilot reference price of ₹3,500 entered manually, the app 
 
 - `GET /api/health`
 - `GET /api/config` — default quality rubric, valuation assumptions, and combined weights
-- `GET /api/dataset?lookbackYears=5|10&preset=...` — dataset metadata plus screener rows
-- `GET /api/companies?lookbackYears=5|10&preset=...` — screener rows
+- `GET /api/dataset?lookbackYears=5|10&preset=...&prices=...` — dataset metadata plus screener rows
+- `GET /api/companies?lookbackYears=5|10&preset=...&prices=...` — screener rows
 - `GET /api/companies/:id?lookbackYears=5|10&price=...&asOfDate=YYYY-MM-DD&priceSource=...&preset=...` — full result, provenance, coverage, price metadata, warnings
 
 Price fields are optional together. Supply all three to calculate valuation; any partial or invalid combination returns a `400` with a clear message. Unknown companies return `404`.
 
 `preset` is URL-encoded JSON with optional `qualityChecks` (`id`, `floor`, `target`, `weight` per check) and `marginOfSafetyTargetPercent`. The server applies only those fields to the default configuration; it ignores attempts to change the 50/50 combined weights or the valuation scenarios, and rejects malformed values with `400 invalid-preset`.
 
+`prices` is an optional URL-encoded JSON object keyed by company ID, each entry `{ price, asOfDate, source }`. It lets screener rows carry valuation and combined scores without a request per company. An entry that fails price validation is reported per row (`invalid-price`) while the row's quality score still displays; malformed JSON returns `400 invalid-prices`.
+
 ## Limitations
 
 - One company, five annual filings. No quarterly context yet.
 - Watchlists and qualitative reviews live only in this browser's local storage. Clearing site data removes them, and there is no account sync; use the JSON backup to move them.
 - Import replaces local research rather than merging it. Manual prices, the screen preset, and the financial dataset are not part of the backup.
-- Screener sorting covers company, fiscal coverage, and quality. Valuation and combined scores need a per-company manual price and are shown in the company view.
+- Screener valuation and combined scores depend on prices saved in this browser. A missing or invalid saved price is labelled in the row, never rendered as zero.
 - Preset edits are stored in this browser only; they are not part of the financial dataset or a shared team setting.
 - Scores are not calibrated to Indian market conditions; the 50/50 blend can let a cheap, weak company and an expensive, strong company both land mid-range.
 - Terminal value can dominate the intrinsic range, and maintenance capex is a scenario percentage of historical total capex, not a disclosed figure.

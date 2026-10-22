@@ -10,7 +10,7 @@
 
 - [ ] Show a screener table for the five covered companies, ordered by combined score by default.
 - [x] Let the investor choose a 5- or 10-year history and edit the Buffett/Munger-inspired preset filters.
-- [ ] Show the combined score beside quality and valuation subscores; provide useful sorting by those scores and displayed financial measures.
+- [x] Show the combined score beside quality and valuation subscores; provide useful sorting by those scores and displayed financial measures.
 - [x] Open a company analysis view with the total, both component scores, the underlying figures, selected period, and assumptions.
 - [x] Explain each quality and valuation check in plain language, including what it measures and why the result passed or failed.
 - [x] Display “insufficient data” clearly and do not present it as a low score.
@@ -22,9 +22,10 @@
 
 Delivered in issue 08 and extended here:
 
-- The screener table sorts by company, fiscal coverage, and quality, with `aria-sort` and unscored companies kept last.
+- The screener shows combined, quality, and valuation scores plus fiscal coverage, sorts by any of those columns, and defaults to combined score descending. `aria-sort` reflects the active column and unscored rows stay last.
+- Saved manual prices are sent to the list endpoint as a `prices` map, so each row's valuation and combined scores come from the production scorer rather than client-side math. A missing price reads “Price needed”; an invalid one is reported in the row without hiding quality or becoming zero.
 - A Screen settings panel edits the four quality thresholds, their weights, and the margin-of-safety target. Edits go through `scoreFinancialFit`; the server whitelists only threshold/weight/margin fields, so the 50/50 combined weights and valuation scenarios cannot be changed by a preset. Custom presets persist in browser storage and can be reset.
 - Invalid presets return `400 invalid-preset`; the UI validates weights and ordering before applying and restores defaults if a saved preset is rejected.
 
-Still open, because they need the expanded dataset: the five-company table, combined/valuation columns and sorting per row, and a default ordering by combined score. Those move to issue 05 with the remaining company ingestion.
+Still open, because it needs the expanded dataset: the five-company table itself. The combined-score default order and score columns are in place, so the remaining work moves to issue 05 with the other company ingestions.
 

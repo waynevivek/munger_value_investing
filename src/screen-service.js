@@ -9,7 +9,15 @@ const { coverageFor } = require('./pilot-data.js');
 const STALE_PRICE_AFTER_DAYS = 7;
 const MAX_PRICE_SOURCE_LENGTH = 200;
 const MAX_PRESET_LENGTH = 8000;
+const MAX_PRICES_LENGTH = 12000;
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
+const PRICE_ERROR_CODES = new Set([
+  'price-incomplete',
+  'invalid-price',
+  'invalid-price-date',
+  'future-price-date',
+  'invalid-price-source',
+]);
 
 class RequestError extends Error {
   constructor(message, { statusCode = 400, code = 'invalid-request' } = {}) {
@@ -22,6 +30,35 @@ class RequestError extends Error {
 
 function invalidPreset(message) {
   return new RequestError(message, { code: 'invalid-preset' });
+}
+
+function parsePrices(value) {
+  if (value === undefined || value === null || value === '') return {};
+
+  const text = String(value);
+  if (text.length > MAX_PRICES_LENGTH) {
+    throw new RequestError(`prices must be ${MAX_PRICES_LENGTH} characters or fewer.`, { code: 'invalid-prices' });
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new RequestError('prices must be valid JSON.', { code: 'invalid-prices' });
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new RequestError('prices must be a JSON object keyed by company ID.', { code: 'invalid-prices' });
+  }
+  return parsed;
+}
+
+function priceParamsFromEntry(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    throw new RequestError('A saved price must be an object with price, asOfDate, and source.', {
+      code: 'invalid-price',
+    });
+  }
+  return { price: entry.price, asOfDate: entry.asOfDate, priceSource: entry.source };
 }
 
 function parsePreset(value) {
@@ -310,26 +347,66 @@ function screenCompany(companies, params = {}, { now = new Date() } = {}) {
   };
 }
 
-function listCompanies(companies, { lookbackYears = 5, now = new Date(), preset = null } = {}) {
+function screenerRow(detail, priceError = null) {
+  const screen = detail.screen;
+  let valuationStatus = 'scored';
+  if (!Number.isFinite(screen.valuationScore)) {
+    if (priceError) valuationStatus = 'invalid-price';
+    else if (detail.price.status === 'supplied') valuationStatus = 'not-calculated';
+    else valuationStatus = 'price-required';
+  }
+
+  return {
+    companyId: detail.company.companyId,
+    companyName: detail.company.companyName,
+    currency: detail.company.currency,
+    coverage: detail.coverage,
+    qualityScore: screen.qualityScore,
+    qualityStatus: screen.qualityScore === null ? 'insufficient-data' : 'scored',
+    valuationScore: screen.valuationScore,
+    valuationStatus,
+    totalScore: screen.totalScore,
+    price: detail.price,
+    ...(priceError ? { priceError } : {}),
+    warnings: priceError
+      ? [...detail.warnings, { code: 'invalid-saved-price', message: priceError }]
+      : detail.warnings,
+  };
+}
+
+function listCompanies(companies, {
+  lookbackYears = 5,
+  now = new Date(),
+  preset = null,
+  prices = null,
+} = {}) {
   const requestedLookback = parseLookbackYears(lookbackYears);
   const parsedPreset = parsePreset(preset);
+  const priceEntries = parsePrices(prices);
 
   return companies.map((company) => {
-    const detail = screenCompany(companies, {
+    const baseParams = {
       companyId: company.companyId,
       lookbackYears: requestedLookback,
       preset: parsedPreset,
-    }, { now });
-    return {
-      companyId: detail.company.companyId,
-      companyName: detail.company.companyName,
-      currency: detail.company.currency,
-      coverage: detail.coverage,
-      qualityScore: detail.screen.qualityScore,
-      qualityStatus: detail.screen.qualityScore === null ? 'insufficient-data' : 'scored',
-      valuationStatus: 'price-required',
-      warnings: detail.warnings,
     };
+    const entry = priceEntries[company.companyId];
+
+    if (entry === undefined) {
+      return screenerRow(screenCompany(companies, baseParams, { now }));
+    }
+
+    try {
+      const detail = screenCompany(companies, {
+        ...baseParams,
+        ...priceParamsFromEntry(entry),
+      }, { now });
+      return screenerRow(detail);
+    } catch (error) {
+      if (!(error instanceof RequestError) || !PRICE_ERROR_CODES.has(error.code)) throw error;
+      const detail = screenCompany(companies, baseParams, { now });
+      return screenerRow(detail, error.message);
+    }
   });
 }
 

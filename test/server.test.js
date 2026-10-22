@@ -93,6 +93,26 @@ test('shows an insufficient-data ten-year selection with the missing fiscal year
   });
 });
 
+test('uses saved manual prices for screener valuation and combined scores', async () => {
+  await withServer(async (base) => {
+    const prices = encodeURIComponent(JSON.stringify({
+      TCS: { price: 3500, asOfDate: '2026-10-01', source: 'saved quote' },
+    }));
+
+    const datasetResponse = await fetch(`${base}/api/dataset?lookbackYears=5&prices=${prices}`);
+    assert.equal(datasetResponse.status, 200);
+    const dataset = await datasetResponse.json();
+    assert.equal(dataset.companies[0].valuationScore, 0);
+    assert.equal(dataset.companies[0].totalScore, 50);
+    assert.equal(dataset.companies[0].valuationStatus, 'scored');
+
+    const rowsResponse = await fetch(`${base}/api/companies?lookbackYears=5&prices=${prices}`);
+    const rows = await rowsResponse.json();
+    assert.equal(rowsResponse.status, 200);
+    assert.equal(rows.companies[0].totalScore, 50);
+  });
+});
+
 test('rejects invalid requests with clear JSON errors', async () => {
   await withServer(async (base) => {
     const cases = [
@@ -102,6 +122,7 @@ test('rejects invalid requests with clear JSON errors', async () => {
       [`${base}/api/companies/TCS?price=3500&asOfDate=2026-02-31&priceSource=test`, 400, 'invalid-price-date'],
       [`${base}/api/companies/TCS?price=3500&asOfDate=2027-01-01&priceSource=test`, 400, 'future-price-date'],
       [`${base}/api/companies/NOPE`, 404, 'company-not-found'],
+      [`${base}/api/companies?prices=${encodeURIComponent('{')}`, 400, 'invalid-prices'],
       [`${base}/api/unknown`, 404, 'not-found'],
     ];
 

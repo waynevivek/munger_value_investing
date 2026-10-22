@@ -221,6 +221,57 @@ test('recalculates the valuation score from an edited margin-of-safety target', 
   );
 });
 
+test('fills screener valuation and combined scores from saved manual prices', () => {
+  const rows = listCompanies(companies, {
+    lookbackYears: 5,
+    now: NOW,
+    prices: JSON.stringify({ TCS: { price: 3500, asOfDate: '2026-10-01', source: 'saved quote' } }),
+  });
+
+  assert.equal(rows[0].qualityScore, 100);
+  assert.equal(rows[0].valuationScore, 0);
+  assert.equal(rows[0].totalScore, 50);
+  assert.equal(rows[0].valuationStatus, 'scored');
+  assert.equal(rows[0].price.status, 'supplied');
+  assert.equal(rows[0].price.ageDays, 21);
+  assert.equal(rows[0].price.source, 'saved quote');
+});
+
+test('keeps an invalid saved price out of the screener score without hiding quality', () => {
+  const rows = listCompanies(companies, {
+    lookbackYears: 5,
+    now: NOW,
+    prices: JSON.stringify({ TCS: { price: 0, asOfDate: '2026-10-01', source: 'bad quote' } }),
+  });
+
+  assert.equal(rows[0].qualityScore, 100);
+  assert.equal(rows[0].valuationScore, null);
+  assert.equal(rows[0].totalScore, null);
+  assert.equal(rows[0].valuationStatus, 'invalid-price');
+  assert.match(rows[0].priceError, /greater than zero/);
+  assert.equal(rows[0].price.status, 'missing');
+  assert.equal(rows[0].warnings.some(({ code }) => code === 'invalid-saved-price'), true);
+});
+
+test('rejects malformed price maps and treats non-object entries as invalid prices', () => {
+  assert.throws(
+    () => listCompanies(companies, { lookbackYears: 5, prices: '{' }),
+    (error) => error instanceof RequestError && error.code === 'invalid-prices',
+  );
+  assert.throws(
+    () => listCompanies(companies, { lookbackYears: 5, prices: '[]' }),
+    (error) => error instanceof RequestError && error.code === 'invalid-prices',
+  );
+
+  const rows = listCompanies(companies, {
+    lookbackYears: 5,
+    now: NOW,
+    prices: JSON.stringify({ TCS: 'not a price' }),
+  });
+  assert.equal(rows[0].valuationStatus, 'invalid-price');
+  assert.match(rows[0].priceError, /must be an object/);
+});
+
 test('applies a custom preset to screener rows', () => {
   const rows = listCompanies(companies, {
     lookbackYears: 5,

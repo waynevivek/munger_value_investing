@@ -28,7 +28,8 @@ import { DEFAULT_SORT, ariaSort, nextSort, sortCompanies } from './sort.mjs';
 
 const LOOKBACK_STORAGE_KEY = 'munger-screener:lookback';
 const PRESET_STORAGE_KEY = 'munger-screener:preset:v1';
-const savedPriceKey = (companyId) => `munger-screener:manual-price:${companyId}`;
+const SAVED_PRICE_PREFIX = 'munger-screener:manual-price:';
+const savedPriceKey = (companyId) => `${SAVED_PRICE_PREFIX}${companyId}`;
 
 const savedResearch = loadResearch(localStorage);
 
@@ -116,6 +117,29 @@ function clearPrice(companyId) {
   } catch {
     // Nothing else to clear.
   }
+}
+
+function savedPricesParam() {
+  const prices = {};
+  try {
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (typeof key !== 'string' || !key.startsWith(SAVED_PRICE_PREFIX)) continue;
+      const companyId = key.slice(SAVED_PRICE_PREFIX.length);
+      if (!companyId) continue;
+      const saved = readSavedPrice(companyId);
+      if (saved) {
+        prices[companyId] = {
+          price: saved.price,
+          asOfDate: saved.asOfDate,
+          source: saved.source,
+        };
+      }
+    }
+  } catch {
+    return null;
+  }
+  return Object.keys(prices).length > 0 ? JSON.stringify(prices) : null;
 }
 
 function readSavedPreset() {
@@ -288,8 +312,10 @@ function renderPreset() {
 
 const SORT_COLUMNS = [
   { key: 'name', label: 'Company' },
-  { key: 'coverage', label: 'Fiscal coverage' },
+  { key: 'combined', label: 'Combined' },
   { key: 'quality', label: 'Quality' },
+  { key: 'valuation', label: 'Valuation' },
+  { key: 'coverage', label: 'Fiscal coverage' },
 ];
 
 function sortHeader(column) {
@@ -307,17 +333,24 @@ function renderScreenerHead() {
   elements.screenerHead.innerHTML = `<tr>${SORT_COLUMNS.map(sortHeader).join('')}<th scope="col">Analysis</th></tr>`;
 }
 
+function screenerScore(value, unavailableLabel) {
+  if (Number.isFinite(value)) {
+    return `<span class="score-text tone-${scoreTone(value)}">${formatScore(value)}/100</span>`;
+  }
+  return `<span class="score-pill">${escapeHtml(unavailableLabel)}</span>`;
+}
+
 function renderScreener() {
   renderScreenerHead();
 
   if (state.loading) {
-    elements.screenerBody.innerHTML = '<tr><td colspan="4" class="muted">Loading companies…</td></tr>';
+    elements.screenerBody.innerHTML = '<tr><td colspan="6" class="muted">Loading companies…</td></tr>';
     elements.screenerMessage.innerHTML = '';
     return;
   }
 
   if (state.error) {
-    elements.screenerBody.innerHTML = '<tr><td colspan="4" class="muted">Pilot data unavailable.</td></tr>';
+    elements.screenerBody.innerHTML = '<tr><td colspan="6" class="muted">Pilot data unavailable.</td></tr>';
     elements.screenerMessage.innerHTML = '';
     return;
   }
@@ -337,7 +370,7 @@ function renderScreener() {
     : state.companies;
 
   if (visible.length === 0) {
-    elements.screenerBody.innerHTML = '<tr><td colspan="4" class="muted">No watchlisted companies.</td></tr>';
+    elements.screenerBody.innerHTML = '<tr><td colspan="6" class="muted">No watchlisted companies.</td></tr>';
     elements.screenerMessage.innerHTML = `
       <div class="empty-state">
         <h3>No companies in your watchlist</h3>
@@ -349,23 +382,39 @@ function renderScreener() {
   elements.screenerBody.innerHTML = sortCompanies(visible, state.sort).map((company) => {
     const watched = state.research.watchlist.includes(company.companyId);
     const reviewed = hasReview(state.research.reviews[company.companyId]);
+    const priceUnavailable = company.valuationStatus === 'invalid-price'
+      ? 'Invalid price'
+      : company.valuationStatus === 'not-calculated' ? 'Not calculated' : 'Price needed';
+    const combinedUnavailable = Number.isFinite(company.qualityScore)
+      ? priceUnavailable
+      : 'Insufficient data';
     const quality = Number.isFinite(company.qualityScore)
       ? `<span class="score-text tone-${scoreTone(company.qualityScore)}">${formatScore(company.qualityScore)}/100</span>`
       : '<span class="score-pill">Insufficient data</span>';
+    const priceMeta = company.price?.status === 'supplied'
+      ? `<span class="company-meta">${escapeHtml(company.price.asOfDate)} · ${company.price.isStale ? 'stale ' : ''}manual</span>`
+      : '';
     return `
       <tr>
         <td>
           ${watched ? '<span class="watch-star" role="img" aria-label="On your watchlist">★</span> ' : ''}<a class="company-link" href="?company=${encodeURIComponent(company.companyId)}">${escapeHtml(company.companyName)}</a>
           <span class="company-meta">${escapeHtml(company.companyId)} · ${escapeHtml(company.currency)}${reviewed ? ' · review saved' : ''}</span>
         </td>
+        <td>${screenerScore(company.totalScore, combinedUnavailable)}</td>
+        <td>${quality}</td>
+        <td>
+          ${screenerScore(company.valuationScore, priceUnavailable)}
+          ${priceMeta}
+        </td>
         <td>
           ${formatYearRange(company.coverage.fiscalYears)}
           <span class="company-meta">${company.coverage.annualFilings} annual filing${company.coverage.annualFilings === 1 ? '' : 's'}</span>
         </td>
-        <td>${quality}</td>
         <td>
           <a href="?company=${encodeURIComponent(company.companyId)}">Open analysis</a>
-          <span class="company-meta">Enter a dated price for valuation</span>
+          ${company.priceError
+            ? `<span class="company-meta tone-low">Saved price ignored: ${escapeHtml(company.priceError)}</span>`
+            : '<span class="company-meta">Enter or update a dated price in the company view</span>'}
         </td>
       </tr>`;
   }).join('');
@@ -384,8 +433,8 @@ function renderScreener() {
     messages.unshift('<p class="notice notice-success">A custom preset is applied to quality thresholds and weights. '
       + 'The combined score stays 50/50; reset it in Screen settings.</p>');
   }
-  messages.push('<p class="notice">Market price is entered manually in the company view. No price is fetched, so '
-    + 'valuation and the combined score remain blank until a dated price is supplied.</p>');
+  messages.push('<p class="notice">Market price is entered manually in the company view. Saved manual prices fill '
+    + 'the table\u2019s valuation and combined scores; no price is fetched, and companies without one stay blank.</p>');
   elements.screenerMessage.innerHTML = messages.join('');
 }
 
@@ -813,6 +862,8 @@ function renderCompany() {
 function datasetParams() {
   const params = new URLSearchParams({ lookbackYears: String(state.lookbackYears) });
   if (state.preset) params.set('preset', JSON.stringify(state.preset));
+  const prices = savedPricesParam();
+  if (prices) params.set('prices', prices);
   return params;
 }
 
@@ -929,8 +980,25 @@ async function loadDetail({ preserve = false } = {}) {
     }
   }
 
+  if (state.detail) syncScreenerRow(state.detail);
   state.detailLoading = false;
   renderCompany();
+}
+
+function syncScreenerRow(detail) {
+  const row = state.companies.find((company) => company.companyId === detail.company.companyId);
+  if (!row) return;
+
+  row.qualityScore = detail.screen.qualityScore;
+  row.qualityStatus = Number.isFinite(detail.screen.qualityScore) ? 'scored' : 'insufficient-data';
+  row.valuationScore = detail.screen.valuationScore;
+  row.totalScore = detail.screen.totalScore;
+  row.price = detail.price;
+  row.valuationStatus = Number.isFinite(detail.screen.valuationScore)
+    ? 'scored'
+    : detail.price.status === 'supplied' ? 'not-calculated' : 'price-required';
+  delete row.priceError;
+  renderScreener();
 }
 
 function showFormError(message) {

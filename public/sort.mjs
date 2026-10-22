@@ -1,17 +1,19 @@
-export const DEFAULT_SORT = { key: 'quality', direction: 'desc' };
+export const DEFAULT_SORT = { key: 'combined', direction: 'desc' };
 
 const DEFAULT_DIRECTIONS = {
   name: 'asc',
   coverage: 'desc',
+  combined: 'desc',
   quality: 'desc',
+  valuation: 'desc',
 };
 
 function companyName(company) {
   return company.companyName ?? company.companyId ?? '';
 }
 
-function qualityValue(company) {
-  return Number.isFinite(company.qualityScore) ? company.qualityScore : null;
+function scoreValue(company, field) {
+  return Number.isFinite(company[field]) ? company[field] : null;
 }
 
 function coverageValue(company) {
@@ -34,13 +36,19 @@ const COMPARATORS = {
   coverage: (left, right, direction) => (
     compareNullableNumbers(coverageValue(left), coverageValue(right), direction)
   ),
+  combined: (left, right, direction) => (
+    compareNullableNumbers(scoreValue(left, 'totalScore'), scoreValue(right, 'totalScore'), direction)
+  ),
   quality: (left, right, direction) => (
-    compareNullableNumbers(qualityValue(left), qualityValue(right), direction)
+    compareNullableNumbers(scoreValue(left, 'qualityScore'), scoreValue(right, 'qualityScore'), direction)
+  ),
+  valuation: (left, right, direction) => (
+    compareNullableNumbers(scoreValue(left, 'valuationScore'), scoreValue(right, 'valuationScore'), direction)
   ),
 };
 
 export function sortCompanies(companies, { key = DEFAULT_SORT.key, direction = DEFAULT_SORT.direction } = {}) {
-  const compare = COMPARATORS[key] ?? COMPARATORS.quality;
+  const compare = COMPARATORS[key] ?? COMPARATORS[DEFAULT_SORT.key];
   const ordered = companies.map((company, index) => ({ company, index }));
 
   ordered.sort((left, right) => {

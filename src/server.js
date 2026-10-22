@@ -88,10 +88,11 @@ function handleApi(request, response, url, companies, now) {
     if (pathname === '/api/dataset') {
       const lookbackYears = parseLookbackYears(url.searchParams.get('lookbackYears') ?? undefined);
       const preset = url.searchParams.get('preset') ?? undefined;
+      const prices = url.searchParams.get('prices') ?? undefined;
       sendJson(response, 200, {
         dataset: datasetSummary(companies),
         lookbackYears,
-        companies: listCompanies(companies, { lookbackYears, now, preset }),
+        companies: listCompanies(companies, { lookbackYears, now, preset, prices }),
       });
       return;
     }
@@ -99,9 +100,10 @@ function handleApi(request, response, url, companies, now) {
     if (pathname === '/api/companies') {
       const lookbackYears = parseLookbackYears(url.searchParams.get('lookbackYears') ?? undefined);
       const preset = url.searchParams.get('preset') ?? undefined;
+      const prices = url.searchParams.get('prices') ?? undefined;
       sendJson(response, 200, {
         lookbackYears,
-        companies: listCompanies(companies, { lookbackYears, now, preset }),
+        companies: listCompanies(companies, { lookbackYears, now, preset, prices }),
       });
       return;
     }

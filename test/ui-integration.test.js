@@ -88,6 +88,8 @@ test('renders TCS with manual prices, presets, watchlist, reviews, and JSON back
   };
   global.document = documentStub;
   global.localStorage = {
+    get length() { return storage.size; },
+    key: (index) => [...storage.keys()][index] ?? null,
     getItem: (key) => storage.get(key) ?? null,
     setItem: (key, value) => storage.set(key, String(value)),
     removeItem: (key) => storage.delete(key),
@@ -166,7 +168,9 @@ test('renders TCS with manual prices, presets, watchlist, reviews, and JSON back
     assert.doesNotMatch(panel.innerHTML, /undefined|NaN/);
 
     assert.match(screenerBody.innerHTML, /Tata Consultancy Services Limited/);
+    assert.match(screenerBody.innerHTML, /50\/100/);
     assert.match(screenerBody.innerHTML, /100\/100/);
+    assert.match(screenerBody.innerHTML, /Stale|stale/);
     assert.match(elements.get('#dataset-banner').innerHTML, /No automated NSE collection/);
     assert.match(elements.get('#dataset-banner').innerHTML, /Redistribution unverified/);
 
@@ -200,6 +204,7 @@ test('renders TCS with manual prices, presets, watchlist, reviews, and JSON back
     assert.match(panel.innerHTML, /Quality is ready; valuation needs a price/);
     assert.match(panel.innerHTML, /100<small>\/100<\/small>/);
     assert.match(panel.innerHTML, /Enter a dated manual price to calculate LOW, BASE, and HIGH intrinsic values\./);
+    assert.match(screenerBody.innerHTML, /Price needed/);
 
     const presetPanel = elements.get('#preset-panel');
     const presetMessage = elements.get('#preset-message');
@@ -213,7 +218,9 @@ test('renders TCS with manual prices, presets, watchlist, reviews, and JSON back
     assert.match(presetPanel.innerHTML, /id="reset-preset" disabled/);
 
     assert.match(screenerHead.innerHTML, /data-sort="name"/);
+    assert.match(screenerHead.innerHTML, /data-sort="combined"/);
     assert.match(screenerHead.innerHTML, /data-sort="quality"/);
+    assert.match(screenerHead.innerHTML, /data-sort="valuation"/);
     assert.match(screenerHead.innerHTML, /aria-sort="descending"/);
 
     const presetSubmit = presetPanel.listeners.submit;
