@@ -154,3 +154,110 @@ test('screener rows expose quality but never invent a valuation without a price'
   assert.equal(rows[0].valuationStatus, 'price-required');
   assert.deepEqual(rows[0].coverage.fiscalYears, [2022, 2023, 2024, 2025, 2026]);
 });
+
+function customPreset(overrides = {}) {
+  return {
+    qualityChecks: [
+      { id: 'profitability', floor: 90, target: 100, weight: 40 },
+      { id: 'manageable-debt', floor: 2, target: 0.25, weight: 20 },
+      { id: 'earnings-consistency', floor: 40, target: 80, weight: 20 },
+      { id: 'cash-generation', floor: 40, target: 80, weight: 20 },
+    ],
+    marginOfSafetyTargetPercent: 50,
+    ...overrides,
+  };
+}
+
+test('applies custom thresholds and check weights through the production scorer', () => {
+  const detail = screen({ preset: JSON.stringify(customPreset()) });
+  const config = detail.screen.assumptions.configuration;
+
+  assert.equal(detail.screen.status, 'scored');
+  assert.equal(detail.screen.qualityScore, 60);
+  assert.equal(detail.screen.valuationScore, 0);
+  assert.equal(detail.screen.totalScore, 30);
+  assert.deepEqual(detail.screen.componentWeights, { quality: 50, valuation: 50 });
+  assert.equal(config.quality.checks.find(({ id }) => id === 'profitability').weight, 40);
+  assert.equal(config.quality.checks.find(({ id }) => id === 'profitability').floor, 90);
+  assert.equal(config.quality.maximumScore, 100);
+});
+
+test('keeps the 50/50 combined weights and valuation scenarios out of the editable preset', () => {
+  const preset = customPreset({
+    combinedScore: { maximumScore: 100, qualityWeight: 0, valuationWeight: 100 },
+    valuation: {
+      marginOfSafetyTargetPercent: 90,
+      scenarios: { base: { discountRatePercent: 1 } },
+    },
+  });
+  const detail = screen({ preset: JSON.stringify(preset) });
+  const config = detail.screen.assumptions.configuration;
+
+  assert.deepEqual(detail.screen.componentWeights, { quality: 50, valuation: 50 });
+  assert.equal(config.combinedScore.qualityWeight, 50);
+  assert.equal(config.combinedScore.valuationWeight, 50);
+  assert.equal(config.valuation.marginOfSafetyTargetPercent, 50);
+  assert.equal(config.valuation.scenarios.base.discountRatePercent, 12);
+});
+
+test('recalculates the valuation score from an edited margin-of-safety target', () => {
+  const base = screen({ price: '500' });
+  const custom = screen({
+    price: '500',
+    preset: JSON.stringify({ marginOfSafetyTargetPercent: 80 }),
+  });
+
+  assert.equal(base.screen.valuationScore, 100);
+  assert.ok(custom.screen.valuation.baseMarginOfSafetyPercent > 0);
+  const expectedValuation = Math.round(
+    (custom.screen.valuation.baseMarginOfSafetyPercent / 80) * 100 * 100,
+  ) / 100;
+  assert.equal(custom.screen.valuationScore, expectedValuation);
+  assert.ok(expectedValuation > 0 && expectedValuation < 100);
+  assert.equal(custom.screen.qualityScore, 100);
+  assert.equal(
+    custom.screen.totalScore,
+    Math.round(((100 * 50 + expectedValuation * 50) / 100) * 100) / 100,
+  );
+});
+
+test('applies a custom preset to screener rows', () => {
+  const rows = listCompanies(companies, {
+    lookbackYears: 5,
+    preset: JSON.stringify(customPreset()),
+  });
+
+  assert.equal(rows[0].qualityScore, 60);
+  assert.equal(rows[0].qualityStatus, 'scored');
+});
+
+test('rejects malformed and out-of-range presets with a 400 invalid-preset error', () => {
+  const cases = [
+    ['{', /valid JSON/],
+    ['[]', /JSON object/],
+    [JSON.stringify({ qualityChecks: 'nope' }), /must be an array/],
+    [JSON.stringify({ qualityChecks: [{ id: 'unknown', floor: 0, target: 1, weight: 100 }] }), /Unknown quality check/],
+    [JSON.stringify({ qualityChecks: [customPreset().qualityChecks[0], customPreset().qualityChecks[0]] }), /more than once/],
+    [JSON.stringify({ qualityChecks: [{ id: 'profitability', floor: 0, target: 15, weight: 90 }] }), /weights must add/],
+    [JSON.stringify({
+      qualityChecks: [{ id: 'profitability', floor: '0', target: 15, weight: 100 }],
+    }), /finite number/],
+    [JSON.stringify({
+      qualityChecks: [{ id: 'profitability', floor: 0, target: 15, weight: -10 }],
+    }), /cannot be negative/],
+    [JSON.stringify({ marginOfSafetyTargetPercent: 0 }), /invalid/],
+    [JSON.stringify({ marginOfSafetyTargetPercent: 25 }).padEnd(8100, ' '), /characters or fewer/],
+    [JSON.stringify(customPreset({ marginOfSafetyTargetPercent: Number.NaN })), /finite number|invalid/],
+  ];
+
+  for (const [preset, pattern] of cases) {
+    assert.throws(
+      () => screen({ preset }),
+      (error) => error instanceof RequestError
+        && error.statusCode === 400
+        && error.code === 'invalid-preset'
+        && pattern.test(error.message),
+      preset,
+    );
+  }
+});

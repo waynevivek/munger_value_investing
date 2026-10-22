@@ -21,7 +21,8 @@ npm test
 
 ## What the demo shows
 
-- **Screener:** covered companies, available fiscal years, and quality score for a 5- or 10-year selection. The 10-year option correctly reports missing FY2017–FY2021 rather than scoring five years as ten.
+- **Screener:** covered companies, available fiscal years, and quality score for a 5- or 10-year selection. Columns sort by company, fiscal coverage, or quality. The 10-year option correctly reports missing FY2017–FY2021 rather than scoring five years as ten.
+- **Editable preset:** the quality thresholds and check weights can be edited and reset. Changes are scored by the production engine and saved in the browser. The 50/50 combined weights and valuation scenarios are not editable, so the product decision stays fixed.
 - **Company view:** quality 100/100, valuation 0/100 at a premium price, combined 50/100, and the full breakdown behind each number.
 - **Intrinsic range:** LOW/BASE/HIGH values calculated live by `src/financial-fit.js`, with the growth, terminal-growth, discount-rate, and maintenance-capex assumptions for each case.
 - **Market price:** entered manually with an as-of date and source. It is always labelled manual/not live, and stale after 7 days. No price is fetched or stored by the server.
@@ -58,7 +59,7 @@ With the documented pilot reference price of ₹3,500 entered manually, the app 
 | `src/financial-fit.js` | Pure valuation and 50/50 combination (unchanged production engine) |
 | `src/manual-nse-csv.js` | Validating manual CSV adapter with per-field provenance |
 | `src/pilot-data.js` | Loads and describes the pilot dataset |
-| `src/screen-service.js` | Validates lookback/manual price, calls the scorer, adds coverage and warnings |
+| `src/screen-service.js` | Validates lookback/manual price/preset, calls the scorer, adds coverage and warnings |
 | `src/server.js` | Zero-dependency HTTP API and static file server |
 | `public/` | Screener and company-view client (vanilla ES modules) |
 | `test/` | Scoring, adapter, service, HTTP, render, and DOM-level UI integration tests |
@@ -66,15 +67,20 @@ With the documented pilot reference price of ₹3,500 entered manually, the app 
 ### API
 
 - `GET /api/health`
-- `GET /api/dataset?lookbackYears=5|10` — dataset metadata plus screener rows
-- `GET /api/companies?lookbackYears=5|10` — screener rows
-- `GET /api/companies/:id?lookbackYears=5|10&price=...&asOfDate=YYYY-MM-DD&priceSource=...` — full result, provenance, coverage, price metadata, warnings
+- `GET /api/config` — default quality rubric, valuation assumptions, and combined weights
+- `GET /api/dataset?lookbackYears=5|10&preset=...` — dataset metadata plus screener rows
+- `GET /api/companies?lookbackYears=5|10&preset=...` — screener rows
+- `GET /api/companies/:id?lookbackYears=5|10&price=...&asOfDate=YYYY-MM-DD&priceSource=...&preset=...` — full result, provenance, coverage, price metadata, warnings
 
 Price fields are optional together. Supply all three to calculate valuation; any partial or invalid combination returns a `400` with a clear message. Unknown companies return `404`.
+
+`preset` is URL-encoded JSON with optional `qualityChecks` (`id`, `floor`, `target`, `weight` per check) and `marginOfSafetyTargetPercent`. The server applies only those fields to the default configuration; it ignores attempts to change the 50/50 combined weights or the valuation scenarios, and rejects malformed values with `400 invalid-preset`.
 
 ## Limitations
 
 - One company, five annual filings. No quarterly context, watchlist, notes, or JSON backup yet.
+- Screener sorting covers company, fiscal coverage, and quality. Valuation and combined scores need a per-company manual price and are shown in the company view.
+- Preset edits are stored in this browser only; they are not part of the financial dataset or a shared team setting.
 - Scores are not calibrated to Indian market conditions; the 50/50 blend can let a cheap, weak company and an expensive, strong company both land mid-range.
 - Terminal value can dominate the intrinsic range, and maintenance capex is a scenario percentage of historical total capex, not a disclosed figure.
 - The manual price's date and source are self-reported and are not independently verified.

@@ -203,6 +203,24 @@ select:focus-visible, input:focus-visible, button:focus-visible, summary:focus-v
   vertical-align: top;
 }
 .screener-table tr:last-child td { border-bottom: 0; }
+.sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+.sort-button:hover { color: var(--accent); }
+.sort-indicator { font-size: 0.7rem; color: var(--muted); }
+.screener-table th[aria-sort="ascending"] .sort-button,
+.screener-table th[aria-sort="descending"] .sort-button { color: var(--ink); }
 .company-link {
   font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif;
   font-weight: 700;
@@ -498,6 +516,28 @@ summary .muted { font-weight: 500; }
 details .table-scroll { margin-top: 0.6rem; }
 .source-text { font-family: var(--mono); font-size: 0.68rem; word-break: break-word; }
 .method-text { font-size: 0.72rem; color: var(--muted); min-width: 12rem; }
+
+.preset-panel {
+  margin: 0 0 0.5rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.preset-panel[open] { padding-bottom: 0.85rem; }
+.preset-panel summary { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+.preset-form { margin-top: 0.6rem; }
+.preset-table td { vertical-align: middle; }
+.preset-input {
+  width: 6.5rem;
+  padding: 0.35rem 0.45rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+.preset-margin { max-width: 22rem; margin-top: 0.7rem; }
+.preset-form .form-actions { margin-top: 0.8rem; }
+.custom-chip { background: var(--accent-soft); border-color: #b9d6c9; color: var(--accent); }
+#preset-message:empty { display: none; }
 
 .coverage-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.5rem 0 0.8rem; }
 .chip {

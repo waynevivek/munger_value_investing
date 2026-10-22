@@ -9,6 +9,7 @@ const { loadPilotDataset } = require('../src/pilot-data.js');
 function elementStub() {
   return {
     innerHTML: '',
+    textContent: '',
     value: '',
     listeners: {},
     addEventListener(type, handler) {
@@ -38,8 +39,11 @@ test('renders TCS, accepts a manual price, and clears it back to a no-price stat
   const elements = new Map([
     ['#dataset-banner', elementStub()],
     ['#lookback', elementStub()],
+    ['#screener-head', elementStub()],
     ['#screener-body', elementStub()],
     ['#screener-message', elementStub()],
+    ['#preset-panel', elementStub()],
+    ['#preset-message', elementStub()],
     ['#company-panel', elementStub()],
   ]);
   const storage = new Map([
@@ -78,9 +82,30 @@ test('renders TCS, accepts a manual price, and clears it back to a no-price stat
     setItem: (key, value) => storage.set(key, String(value)),
     removeItem: (key) => storage.delete(key),
   };
+  const presetFormValues = {
+    'check:profitability:floor': '90',
+    'check:profitability:target': '100',
+    'check:profitability:weight': '40',
+    'check:manageable-debt:floor': '2',
+    'check:manageable-debt:target': '0.25',
+    'check:manageable-debt:weight': '20',
+    'check:earnings-consistency:floor': '40',
+    'check:earnings-consistency:target': '80',
+    'check:earnings-consistency:weight': '20',
+    'check:cash-generation:floor': '40',
+    'check:cash-generation:target': '80',
+    'check:cash-generation:weight': '20',
+    marginOfSafetyTargetPercent: '50',
+  };
+
   global.fetch = (input, init) => realFetch(new URL(input, base), init);
   global.FormData = class {
+    constructor(form) {
+      this.form = form;
+    }
+
     get(name) {
+      if (this.form?.id === 'preset-form') return presetFormValues[name] ?? null;
       return { price: '3500', asOfDate: '2026-10-22', source: 'ui test quote' }[name] ?? null;
     }
   };
@@ -147,6 +172,55 @@ test('renders TCS, accepts a manual price, and clears it back to a no-price stat
     assert.match(panel.innerHTML, /Quality is ready; valuation needs a price/);
     assert.match(panel.innerHTML, /100<small>\/100<\/small>/);
     assert.match(panel.innerHTML, /Enter a dated manual price to calculate LOW, BASE, and HIGH intrinsic values\./);
+
+    const presetPanel = elements.get('#preset-panel');
+    const presetMessage = elements.get('#preset-message');
+    const screenerHead = elements.get('#screener-head');
+
+    await waitFor(() => presetPanel.innerHTML.includes('preset-form'), 'the default preset form');
+    assert.match(presetPanel.innerHTML, /default preset/);
+    assert.match(presetPanel.innerHTML, /name="check:profitability:floor"[^>]*value="0"/);
+    assert.match(presetPanel.innerHTML, /name="check:profitability:weight"[^>]*value="25"/);
+    assert.match(presetPanel.innerHTML, /name="marginOfSafetyTargetPercent"[^>]*value="25"/);
+    assert.match(presetPanel.innerHTML, /id="reset-preset" disabled/);
+
+    assert.match(screenerHead.innerHTML, /data-sort="name"/);
+    assert.match(screenerHead.innerHTML, /data-sort="quality"/);
+    assert.match(screenerHead.innerHTML, /aria-sort="descending"/);
+
+    const presetSubmit = presetPanel.listeners.submit;
+    assert.equal(typeof presetSubmit, 'function');
+    await presetSubmit({ target: { id: 'preset-form' }, preventDefault() {} });
+
+    await waitFor(
+      () => panel.innerHTML.includes('60<small>/100</small>') && screenerBody.innerHTML.includes('60/100'),
+      'the recalculated quality score after applying a custom preset',
+    );
+    assert.equal(presetMessage.textContent, '');
+    assert.match(presetPanel.innerHTML, /Custom preset/);
+    assert.match(elements.get('#screener-message').innerHTML, /custom preset/i);
+    const savedPreset = JSON.parse(storage.get('munger-screener:preset:v1'));
+    assert.equal(savedPreset.qualityChecks.find(({ id }) => id === 'profitability').weight, 40);
+    assert.equal(savedPreset.marginOfSafetyTargetPercent, 50);
+
+    await documentClickHandler({
+      target: {
+        closest: (selector) => (selector === '[data-sort]' ? { dataset: { sort: 'name' } } : null),
+      },
+    });
+    assert.match(screenerHead.innerHTML, /aria-sort="ascending"/);
+
+    await documentClickHandler({
+      target: {
+        closest: (selector) => (selector === '#reset-preset' ? {} : null),
+      },
+    });
+    await waitFor(
+      () => panel.innerHTML.includes('100<small>/100</small>') && !storage.has('munger-screener:preset:v1'),
+      'the default quality score after resetting the preset',
+    );
+    assert.match(screenerBody.innerHTML, /100\/100/);
+    assert.match(presetPanel.innerHTML, /default preset/);
   } finally {
     global.fetch = realFetch;
     global.FormData = realFormData;

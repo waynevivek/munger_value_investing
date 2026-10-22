@@ -42,17 +42,13 @@
         </label>
       </div>
 
+      <div id="preset-panel"></div>
+      <p id="preset-message" class="form-error" role="alert"></p>
+
       <div class="table-scroll">
         <table class="screener-table">
           <caption class="visually-hidden">Covered companies with available fiscal coverage and quality score</caption>
-          <thead>
-            <tr>
-              <th scope="col">Company</th>
-              <th scope="col">Fiscal coverage</th>
-              <th scope="col">Quality</th>
-              <th scope="col">Analysis</th>
-            </tr>
-          </thead>
+          <thead id="screener-head"></thead>
           <tbody id="screener-body">
             <tr><td colspan="4" class="muted">Loading companies…</td></tr>
           </tbody>

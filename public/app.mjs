@@ -13,8 +13,11 @@ import {
   thresholdText,
   FIELD_META,
 } from './render.mjs';
+import { presetFromGetter, presetValues, validatePreset } from './preset.mjs';
+import { DEFAULT_SORT, ariaSort, nextSort, sortCompanies } from './sort.mjs';
 
 const LOOKBACK_STORAGE_KEY = 'munger-screener:lookback';
+const PRESET_STORAGE_KEY = 'munger-screener:preset:v1';
 const savedPriceKey = (companyId) => `munger-screener:manual-price:${companyId}`;
 
 const state = {
@@ -22,6 +25,10 @@ const state = {
   companyId: new URLSearchParams(window.location.search).get('company'),
   dataset: null,
   companies: [],
+  config: null,
+  preset: readSavedPreset(),
+  presetMessage: null,
+  sort: { ...DEFAULT_SORT },
   detail: null,
   loading: true,
   detailLoading: false,
@@ -32,8 +39,11 @@ const state = {
 const elements = {
   banner: document.querySelector('#dataset-banner'),
   lookback: document.querySelector('#lookback'),
+  screenerHead: document.querySelector('#screener-head'),
   screenerBody: document.querySelector('#screener-body'),
   screenerMessage: document.querySelector('#screener-message'),
+  presetPanel: document.querySelector('#preset-panel'),
+  presetMessage: document.querySelector('#preset-message'),
   panel: document.querySelector('#company-panel'),
 };
 
@@ -83,6 +93,33 @@ function savePrice(companyId, price) {
 function clearPrice(companyId) {
   try {
     localStorage.removeItem(savedPriceKey(companyId));
+  } catch {
+    // Nothing else to clear.
+  }
+}
+
+function readSavedPreset() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PRESET_STORAGE_KEY) ?? 'null');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    if (!Array.isArray(parsed.qualityChecks)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function savePreset(preset) {
+  try {
+    localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(preset));
+  } catch {
+    // The preset is still applied for this page view.
+  }
+}
+
+function clearSavedPreset() {
+  try {
+    localStorage.removeItem(PRESET_STORAGE_KEY);
   } catch {
     // Nothing else to clear.
   }
@@ -159,7 +196,100 @@ function renderBanner() {
     <p class="footnote">${escapeHtml(dataset.redistribution)} ${escapeHtml(dataset.disclaimer)}</p>`;
 }
 
+function renderPresetMessage() {
+  elements.presetMessage.textContent = state.presetMessage ?? '';
+}
+
+function renderPreset() {
+  if (!state.config) {
+    elements.presetPanel.innerHTML = '';
+    return;
+  }
+
+  const values = presetValues(state.preset, state.config);
+  const custom = state.preset !== null;
+  const valuesById = new Map(values.qualityChecks.map((check) => [check.id, check]));
+
+  const rows = state.config.quality.checks.map((check) => {
+    const current = valuesById.get(check.id) ?? check;
+    const unit = check.unit === 'ratio' ? '×' : check.unit === 'percent-of-years' ? '% of years' : '%';
+    return `
+      <tr>
+        <td>
+          ${escapeHtml(check.label)}
+          <span class="company-meta">${escapeHtml(check.measurement)} · ${escapeHtml(unit)}</span>
+        </td>
+        <td class="num">
+          <input class="preset-input" type="number" step="any" name="check:${escapeHtml(check.id)}:floor"
+            value="${escapeHtml(current.floor)}" aria-label="${escapeHtml(check.label)} zero-credit value">
+        </td>
+        <td class="num">
+          <input class="preset-input" type="number" step="any" name="check:${escapeHtml(check.id)}:target"
+            value="${escapeHtml(current.target)}" aria-label="${escapeHtml(check.label)} full-credit value">
+        </td>
+        <td class="num">
+          <input class="preset-input" type="number" min="0" step="any" name="check:${escapeHtml(check.id)}:weight"
+            value="${escapeHtml(current.weight)}" aria-label="${escapeHtml(check.label)} weight">
+        </td>
+      </tr>`;
+  }).join('');
+
+  elements.presetPanel.innerHTML = `
+    <details class="preset-panel"${custom ? ' open' : ''}>
+      <summary>
+        Screen settings
+        ${custom ? '<span class="chip custom-chip">Custom preset</span>' : '<span class="muted">· default preset</span>'}
+      </summary>
+      <form id="preset-form" class="preset-form" novalidate>
+        <p class="subsection-intro">Edit the thresholds and weights used by the quality scorer. The combined score remains
+          50% quality and 50% valuation, and the valuation scenario assumptions stay fixed.</p>
+        <div class="table-scroll">
+          <table class="data-table preset-table">
+            <thead>
+              <tr><th scope="col">Check</th><th scope="col">Zero credit</th><th scope="col">Full credit</th><th scope="col">Weight</th></tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <label class="field preset-margin" for="margin-target">
+          <span>Margin-of-safety target (%)</span>
+          <input id="margin-target" name="marginOfSafetyTargetPercent" type="number" step="any"
+            value="${escapeHtml(values.marginOfSafetyTargetPercent)}">
+        </label>
+        <div class="form-actions">
+          <button class="button" type="submit">Apply preset</button>
+          <button class="button button-secondary" type="button" id="reset-preset"${custom ? '' : ' disabled'}>Reset to default</button>
+        </div>
+        <p class="form-help">Weights must add to ${state.config.quality.maximumScore}. These are transparent screening heuristics,
+          not an official Buffett or Munger formula.</p>
+      </form>
+    </details>`;
+}
+
+const SORT_COLUMNS = [
+  { key: 'name', label: 'Company' },
+  { key: 'coverage', label: 'Fiscal coverage' },
+  { key: 'quality', label: 'Quality' },
+];
+
+function sortHeader(column) {
+  const aria = ariaSort(state.sort, column.key);
+  const indicator = aria === 'none' ? '↕' : aria === 'ascending' ? '▲' : '▼';
+  return `
+    <th scope="col" aria-sort="${aria}">
+      <button type="button" class="sort-button" data-sort="${column.key}">
+        ${escapeHtml(column.label)}<span class="sort-indicator" aria-hidden="true">${indicator}</span>
+      </button>
+    </th>`;
+}
+
+function renderScreenerHead() {
+  elements.screenerHead.innerHTML = `<tr>${SORT_COLUMNS.map(sortHeader).join('')}<th scope="col">Analysis</th></tr>`;
+}
+
 function renderScreener() {
+  renderScreenerHead();
+
   if (state.loading) {
     elements.screenerBody.innerHTML = '<tr><td colspan="4" class="muted">Loading companies…</td></tr>';
     elements.screenerMessage.innerHTML = '';
@@ -182,7 +312,7 @@ function renderScreener() {
     return;
   }
 
-  elements.screenerBody.innerHTML = state.companies.map((company) => {
+  elements.screenerBody.innerHTML = sortCompanies(state.companies, state.sort).map((company) => {
     const quality = Number.isFinite(company.qualityScore)
       ? `<span class="score-text tone-${scoreTone(company.qualityScore)}">${formatScore(company.qualityScore)}/100</span>`
       : '<span class="score-pill">Insufficient data</span>';
@@ -210,6 +340,10 @@ function renderScreener() {
     messages.push(`<p class="notice notice-warning">The ${state.lookbackYears}-year lookback is incomplete for `
       + `${incomplete.map((company) => escapeHtml(company.companyId)).join(', ')}. The analysis reports the missing `
       + 'fiscal years and withholds a score instead of treating missing data as poor performance.</p>');
+  }
+  if (state.preset) {
+    messages.unshift('<p class="notice notice-success">A custom preset is applied to quality thresholds and weights. '
+      + 'The combined score stays 50/50; reset it in Screen settings.</p>');
   }
   messages.push('<p class="notice">Market price is entered manually in the company view. No price is fetched, so '
     + 'valuation and the combined score remain blank until a dated price is supplied.</p>');
@@ -580,6 +714,28 @@ function renderCompany() {
   document.title = `${company.companyName} — Munger Screener`;
 }
 
+function datasetParams() {
+  const params = new URLSearchParams({ lookbackYears: String(state.lookbackYears) });
+  if (state.preset) params.set('preset', JSON.stringify(state.preset));
+  return params;
+}
+
+async function fetchDataset() {
+  const params = datasetParams();
+  try {
+    return await fetchJson(`/api/dataset?${params.toString()}`);
+  } catch (error) {
+    if (state.preset && error.status === 400) {
+      state.preset = null;
+      state.presetMessage = `The saved custom preset was rejected: ${error.message} Defaults were restored.`;
+      clearSavedPreset();
+      params.delete('preset');
+      return fetchJson(`/api/dataset?${params.toString()}`);
+    }
+    throw error;
+  }
+}
+
 async function loadApp() {
   state.loading = true;
   state.error = null;
@@ -587,7 +743,11 @@ async function loadApp() {
   renderScreener();
 
   try {
-    const data = await fetchJson(`/api/dataset?lookbackYears=${state.lookbackYears}`);
+    const [data, configData] = await Promise.all([
+      fetchDataset(),
+      state.config ? Promise.resolve(null) : fetchJson('/api/config'),
+    ]);
+    if (configData) state.config = configData.configuration;
     state.dataset = data.dataset;
     state.companies = data.companies;
   } catch (error) {
@@ -599,12 +759,16 @@ async function loadApp() {
     renderBanner();
     renderScreener();
     renderCompany();
+    renderPreset();
+    renderPresetMessage();
     return;
   }
 
   state.loading = false;
   renderBanner();
   renderScreener();
+  renderPreset();
+  renderPresetMessage();
 
   if (state.companies.length === 0) {
     state.detail = null;
@@ -640,6 +804,7 @@ async function loadDetail({ preserve = false } = {}) {
   renderCompany();
 
   const params = new URLSearchParams({ lookbackYears: String(state.lookbackYears) });
+  if (state.preset) params.set('preset', JSON.stringify(state.preset));
   const saved = readSavedPrice(state.companyId);
   if (saved) {
     params.set('price', String(saved.price));
@@ -688,6 +853,41 @@ function showFormError(message) {
   }
 }
 
+function showPresetMessage(message) {
+  state.presetMessage = message;
+  renderPresetMessage();
+}
+
+async function handlePresetSubmit(form) {
+  if (!state.config) return;
+
+  const data = new FormData(form);
+  const preset = presetFromGetter(state.config, (name) => data.get(name));
+  const problem = validatePreset(preset, state.config);
+  if (problem) {
+    showPresetMessage(problem);
+    return;
+  }
+
+  state.preset = preset;
+  state.presetMessage = null;
+  savePreset(preset);
+  renderPreset();
+  renderPresetMessage();
+  renderScreener();
+  await loadApp();
+}
+
+async function handlePresetReset() {
+  state.preset = null;
+  state.presetMessage = null;
+  clearSavedPreset();
+  renderPreset();
+  renderPresetMessage();
+  renderScreener();
+  await loadApp();
+}
+
 async function handlePriceSubmit(form) {
   const data = new FormData(form);
   const priceText = String(data.get('price') ?? '').trim();
@@ -728,6 +928,12 @@ elements.panel.addEventListener('submit', async (event) => {
   await handlePriceSubmit(event.target);
 });
 
+elements.presetPanel.addEventListener('submit', async (event) => {
+  if (event.target.id !== 'preset-form') return;
+  event.preventDefault();
+  await handlePresetSubmit(event.target);
+});
+
 document.addEventListener('click', async (event) => {
   const retry = event.target.closest('[data-retry]');
   if (retry) {
@@ -736,6 +942,19 @@ document.addEventListener('click', async (event) => {
     } else {
       await loadApp();
     }
+    return;
+  }
+
+  const sortButton = event.target.closest('[data-sort]');
+  if (sortButton && sortButton.dataset.sort) {
+    state.sort = nextSort(state.sort, sortButton.dataset.sort);
+    renderScreener();
+    return;
+  }
+
+  const presetReset = event.target.closest('#reset-preset');
+  if (presetReset) {
+    await handlePresetReset();
     return;
   }
 

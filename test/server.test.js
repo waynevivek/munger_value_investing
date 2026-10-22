@@ -115,6 +115,78 @@ test('rejects invalid requests with clear JSON errors', async () => {
   });
 });
 
+function presetQuery(preset) {
+  return new URLSearchParams({ preset: JSON.stringify(preset) }).toString();
+}
+
+const customPreset = {
+  qualityChecks: [
+    { id: 'profitability', floor: 90, target: 100, weight: 40 },
+    { id: 'manageable-debt', floor: 2, target: 0.25, weight: 20 },
+    { id: 'earnings-consistency', floor: 40, target: 80, weight: 20 },
+    { id: 'cash-generation', floor: 40, target: 80, weight: 20 },
+  ],
+  marginOfSafetyTargetPercent: 50,
+};
+
+test('exposes the default configuration and applies a custom preset through the API', async () => {
+  await withServer(async (base) => {
+    const configResponse = await fetch(`${base}/api/config`);
+    assert.equal(configResponse.status, 200);
+    const config = await configResponse.json();
+    assert.equal(config.configuration.quality.checks.length, 4);
+    assert.equal(config.configuration.quality.maximumScore, 100);
+    assert.equal(config.configuration.valuation.marginOfSafetyTargetPercent, 25);
+    assert.equal(config.configuration.combinedScore.qualityWeight, 50);
+    assert.equal(config.configuration.combinedScore.valuationWeight, 50);
+
+    const query = presetQuery(customPreset);
+    const detailResponse = await fetch(
+      `${base}/api/companies/TCS?lookbackYears=5&price=3500&asOfDate=2026-10-01&priceSource=manual%20test%20quote&${query}`,
+    );
+    assert.equal(detailResponse.status, 200);
+    const detail = await detailResponse.json();
+    assert.equal(detail.screen.qualityScore, 60);
+    assert.equal(detail.screen.totalScore, 30);
+    assert.deepEqual(detail.screen.componentWeights, { quality: 50, valuation: 50 });
+    assert.equal(detail.screen.assumptions.configuration.quality.checks[0].weight, 40);
+
+    const screenerResponse = await fetch(`${base}/api/companies?lookbackYears=5&${query}`);
+    const screener = await screenerResponse.json();
+    assert.equal(screenerResponse.status, 200);
+    assert.equal(screener.companies[0].qualityScore, 60);
+
+    const datasetResponse = await fetch(`${base}/api/dataset?lookbackYears=5&${query}`);
+    const dataset = await datasetResponse.json();
+    assert.equal(datasetResponse.status, 200);
+    assert.equal(dataset.companies[0].qualityScore, 60);
+  });
+});
+
+test('rejects malformed or invalid presets without breaking the screener', async () => {
+  await withServer(async (base) => {
+    const cases = [
+      [`${base}/api/companies/TCS?preset=${encodeURIComponent('{')}`],
+      [`${base}/api/companies?preset=${encodeURIComponent(JSON.stringify({
+        qualityChecks: [{ id: 'unknown', floor: 0, target: 1, weight: 100 }],
+      }))}`],
+      [`${base}/api/dataset?preset=${encodeURIComponent(JSON.stringify({ marginOfSafetyTargetPercent: 0 }))}`],
+    ];
+
+    for (const [url] of cases) {
+      const response = await fetch(url);
+      assert.equal(response.status, 400, url);
+      const body = await response.json();
+      assert.equal(body.error.code, 'invalid-preset', url);
+      assert.equal(typeof body.error.message, 'string');
+    }
+
+    const stillWorks = await fetch(`${base}/api/companies/TCS?lookbackYears=5`);
+    assert.equal(stillWorks.status, 200);
+    assert.equal((await stillWorks.json()).screen.qualityScore, 100);
+  });
+});
+
 test('serves the UI with security headers and blocks path traversal', async () => {
   await withServer(async (base) => {
     const page = await fetch(`${base}/`);

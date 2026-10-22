@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 
+const { createEditableFinancialFitConfig } = require('./financial-fit.js');
 const { datasetSummary, loadPilotDataset } = require('./pilot-data.js');
 const {
   RequestError,
@@ -79,21 +80,28 @@ function handleApi(request, response, url, companies, now) {
       return;
     }
 
+    if (pathname === '/api/config') {
+      sendJson(response, 200, { configuration: createEditableFinancialFitConfig() });
+      return;
+    }
+
     if (pathname === '/api/dataset') {
       const lookbackYears = parseLookbackYears(url.searchParams.get('lookbackYears') ?? undefined);
+      const preset = url.searchParams.get('preset') ?? undefined;
       sendJson(response, 200, {
         dataset: datasetSummary(companies),
         lookbackYears,
-        companies: listCompanies(companies, { lookbackYears, now }),
+        companies: listCompanies(companies, { lookbackYears, now, preset }),
       });
       return;
     }
 
     if (pathname === '/api/companies') {
       const lookbackYears = parseLookbackYears(url.searchParams.get('lookbackYears') ?? undefined);
+      const preset = url.searchParams.get('preset') ?? undefined;
       sendJson(response, 200, {
         lookbackYears,
-        companies: listCompanies(companies, { lookbackYears, now }),
+        companies: listCompanies(companies, { lookbackYears, now, preset }),
       });
       return;
     }
